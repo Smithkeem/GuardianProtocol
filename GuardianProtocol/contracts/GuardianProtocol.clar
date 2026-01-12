@@ -435,4 +435,88 @@
     )
 )
 
+;; Comprehensive compliance check with automatic policy enforcement
+;; This function performs a multi-layer verification including policy status,
+;; user compliance level, reputation score, violation history, blacklist status,
+;; verification expiry, and policy-specific approvals. It's designed to be called
+;; before any regulated activity to ensure full compliance with dynamic policies.
+;; @param user: principal - the user requesting access to regulated activity
+;; @param policy-id: uint - the policy that governs the activity
+;; @param required-reputation-boost: uint - additional reputation required beyond policy minimum
+;; @returns: (response bool uint) - true if all compliance checks pass, error code otherwise
+(define-public (enforce-compliance-with-approval
+    (user principal)
+    (policy-id uint)
+    (required-reputation-boost uint))
+    (let
+        (
+            ;; Retrieve policy data, user compliance data, and approval data
+            (policy-data-option (map-get? policies { policy-id: policy-id }))
+            (user-data-option (map-get? user-compliance { user: user }))
+            (approval-data-option (map-get? policy-approvals { user: user, policy-id: policy-id }))
+        )
+        ;; Step 1: Validate that policy exists
+        (asserts! (is-some policy-data-option) ERR-POLICY-NOT-FOUND)
+        
+        ;; Step 2: Validate that user is registered in compliance system
+        (asserts! (is-some user-data-option) ERR-USER-NOT-COMPLIANT)
+        
+        ;; Step 3: Check policy is active and not expired
+        (asserts! (is-policy-active policy-id) ERR-POLICY-EXPIRED)
+        
+        ;; Step 4: Perform detailed compliance verification
+        (match policy-data-option
+            policy-data
+            (match user-data-option
+                user-data
+                (begin
+                    ;; Check 4a: User is not blacklisted
+                    (asserts! (not (get is-blacklisted user-data)) ERR-USER-NOT-COMPLIANT)
+                    
+                    ;; Check 4b: User's verification hasn't expired
+                    (asserts! (>= (get verification-expiry user-data) block-height) ERR-POLICY-EXPIRED)
+                    
+                    ;; Check 4c: User meets minimum compliance level requirement
+                    (asserts! 
+                        (>= (get compliance-level user-data) (get required-level policy-data))
+                        ERR-INVALID-COMPLIANCE-LEVEL
+                    )
+                    
+                    ;; Check 4d: User meets reputation score with additional boost requirement
+                    (asserts! 
+                        (>= (get reputation-score user-data) 
+                            (+ (get min-reputation-score policy-data) required-reputation-boost))
+                        ERR-USER-NOT-COMPLIANT
+                    )
+                    
+                    ;; Check 4e: User hasn't exceeded maximum violation count
+                    (asserts! 
+                        (<= (get violation-count user-data) (get max-violation-count policy-data))
+                        ERR-THRESHOLD-EXCEEDED
+                    )
+                    
+                    ;; Step 5: Verify policy-specific approval exists and is valid
+                    (match approval-data-option
+                        approval-data
+                        (begin
+                            ;; Check 5a: Approval is marked as approved
+                            (asserts! (get approved approval-data) ERR-NOT-AUTHORIZED)
+                            
+                            ;; Check 5b: Approval hasn't expired
+                            (asserts! (>= (get expires-at approval-data) block-height) ERR-POLICY-EXPIRED)
+                            
+                            ;; All compliance checks passed successfully
+                            (ok true)
+                        )
+                        ;; No approval found for this user-policy combination
+                        ERR-NOT-AUTHORIZED
+                    )
+                )
+                ERR-USER-NOT-COMPLIANT
+            )
+            ERR-POLICY-NOT-FOUND
+        )
+    )
+)
+
 
